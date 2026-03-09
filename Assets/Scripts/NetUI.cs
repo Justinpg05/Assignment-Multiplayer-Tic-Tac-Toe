@@ -4,8 +4,7 @@ using Unity.Netcode.Transports.UTP;
 
 public class NetUI : MonoBehaviour
 {
-    // 🔴 PUT YOUR HOST MACHINE IP HERE
-    private string hostIP = "192.168.1.23";  
+    private string hostIP = " ";  // PUT YOUR HOST MACHINE IP HERE, MAKE SURE DEVICES ARE ON THE SAME NETWORK 
 
     public void StartHost()
     {

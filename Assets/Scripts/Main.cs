@@ -6,35 +6,34 @@ using Unity.Netcode;
 public class Main : NetworkBehaviour
 {
     [Header("UI References")]
-    public Button[] cells;        // 9 buttons (0..8 top-left to bottom-right)
-    public Image[] marks;         // 9 child images named "Mark" (same order)
+    public Button[] cells; // clickable buttons to play the game
+    public Image[] marks; // the images that appear either O or X
     public Sprite xSprite;
     public Sprite oSprite;
 
     [Header("Optional UI Text")]
-    public TMP_Text gameOverText; // "X Wins!" / "O Wins!" / "Tie!"
-    public TMP_Text roleText;     // "You are X" / "You are O"
-    public TMP_Text turnText;     // "X's turn" / "O's turn" / "Waiting..."
+    public TMP_Text gameOverText;
+    public TMP_Text roleText;
+    public TMP_Text turnText;
 
-    // 0 empty, 1 = X, 2 = O
     private NetworkList<int> board;
 
-    private NetworkVariable<int> currentTurn = new(
+    private NetworkVariable<int> currentTurn = new( // keeps track of current turn
         1, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
 
-    private NetworkVariable<bool> gameOver = new(
+    private NetworkVariable<bool> gameOver = new( // tells everyone the game is over
         false, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
 
-    private NetworkVariable<ulong> xPlayerId = new(
+    private NetworkVariable<ulong> xPlayerId = new( // keeps track of X player
         0, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
 
-    private NetworkVariable<ulong> oPlayerId = new(
+    private NetworkVariable<ulong> oPlayerId = new( // keeps track of O player
         0, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
 
-    private NetworkVariable<bool> rolesAssigned = new(
+    private NetworkVariable<bool> rolesAssigned = new( // when both players start the game this will be true
         false, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
 
-    private static readonly int[][] wins = new int[][]
+    private static readonly int[][] wins = new int[][] // setup the board
     {
         new[] {0,1,2}, new[] {3,4,5}, new[] {6,7,8},
         new[] {0,3,6}, new[] {1,4,7}, new[] {2,5,8},
@@ -48,14 +47,13 @@ public class Main : NetworkBehaviour
 
     public override void OnNetworkSpawn()
     {
-        // Local: hook UI clicks for THIS client instance
-        for (int i = 0; i < cells.Length; i++)
+        for (int i = 0; i < cells.Length; i++) // make it so the buttons function
         {
             int idx = i;
             cells[i].onClick.AddListener(() => RequestMove(idx));
         }
 
-        // Replication callbacks -> redraw UI
+        // refresh UI when any of these events are fired
         board.OnListChanged += _ => RefreshUI();
         currentTurn.OnValueChanged += (_, __) => RefreshUI();
         gameOver.OnValueChanged += (_, __) => RefreshUI();
@@ -63,7 +61,7 @@ public class Main : NetworkBehaviour
         oPlayerId.OnValueChanged += (_, __) => RefreshUI();
         rolesAssigned.OnValueChanged += (_, __) => RefreshUI();
 
-        if (IsServer)
+        if (IsServer) // server is responsible for setting up the board and assigning roles
         {
             EnsureBoard();
 
@@ -78,8 +76,7 @@ public class Main : NetworkBehaviour
 
     private void OnClientDisconnected(ulong clientId)
     {
-        // Simple: if a player leaves, reset & wait for 2 again
-        if (clientId == xPlayerId.Value || clientId == oPlayerId.Value)
+        if (clientId == xPlayerId.Value || clientId == oPlayerId.Value) // reset game if a player leaves
         {
             rolesAssigned.Value = false;
             xPlayerId.Value = 0;
@@ -88,32 +85,27 @@ public class Main : NetworkBehaviour
         }
     }
 
-    // ---------- CLIENT -> SERVER (Roblox FireServer) ----------
     private void RequestMove(int index)
     {
         if (!IsSpawned) return;
-        SubmitMoveServerRpc(index);
+        SubmitMoveServerRpc(index); // client requests the server to make a move whenever they click a button
     }
 
     [ServerRpc(RequireOwnership = false)]
     private void SubmitMoveServerRpc(int index, ServerRpcParams rpcParams = default)
     {
-        // ---------- SERVER AUTH ----------
-        if (!rolesAssigned.Value) return;
+        if (!rolesAssigned.Value) return; // server makes sure the client isnt trying to cheat or something, move is verified
         if (gameOver.Value) return;
         if (index < 0 || index > 8) return;
         if (board[index] != 0) return;
 
         ulong sender = rpcParams.Receive.SenderClientId;
 
-        // Must be sender's turn
         if (currentTurn.Value == 1 && sender != xPlayerId.Value) return;
         if (currentTurn.Value == 2 && sender != oPlayerId.Value) return;
 
-        // ---------- APPLY MOVE ----------
         board[index] = currentTurn.Value;
 
-        // ---------- WIN / TIE ----------
         if (CheckWin(currentTurn.Value))
         {
             gameOver.Value = true;
@@ -128,21 +120,19 @@ public class Main : NetworkBehaviour
             return;
         }
 
-        // Next turn
+        // next turn
         currentTurn.Value = (currentTurn.Value == 1) ? 2 : 1;
     }
 
-    // ---------- SERVER -> CLIENT (Roblox FireAllClients) ----------
     [ClientRpc]
     private void SetGameOverClientRpc(string msg)
     {
-        if (gameOverText == null) return;
+        if (gameOverText == null) return; // show game over msg
 
         gameOverText.text = msg;
         gameOverText.gameObject.SetActive(!string.IsNullOrEmpty(msg));
     }
 
-    // ---------- ROLE ASSIGNMENT ----------
     private void TryAssignRoles()
     {
         if (!IsServer) return;
@@ -183,27 +173,8 @@ public class Main : NetworkBehaviour
         for (int i = 0; i < 9; i++) board.Add(0);
     }
 
-    // ---------- UI DRAW ----------
-    private void RefreshUI()
+    private void RefreshUI() // updates visuals on the client
     {
-        // Role UI
-        if (roleText != null && rolesAssigned.Value)
-        {
-            ulong me = NetworkManager.Singleton.LocalClientId;
-            roleText.text = (me == xPlayerId.Value) ? "You are X"
-                        : (me == oPlayerId.Value) ? "You are O"
-                        : "Spectator";
-        }
-
-        // Turn UI
-        if (turnText != null)
-        {
-            if (!rolesAssigned.Value) turnText.text = "Waiting for 2 players...";
-            else if (gameOver.Value) { /* leave as-is or show winner */ }
-            else turnText.text = (currentTurn.Value == 1) ? "X's turn" : "O's turn";
-        }
-
-        // Board draw + interactable rules
         for (int i = 0; i < 9; i++)
         {
             int v = (board.Count == 9) ? board[i] : 0;
